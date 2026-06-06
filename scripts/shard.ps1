@@ -774,7 +774,7 @@ function Detect-SystemSpecs {
             $prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
             $rawCuda = & nvidia-smi 2>$null | Out-String
             $ErrorActionPreference = $prevEAP
-            if ($rawCuda -match "CUDA Version:\s*([0-9]+\.[0-9]+)") {
+            if ($rawCuda -match "CUDA.*?Version:\s*([0-9]+\.[0-9]+)") {
                 $specs.CUDAVersion = $Matches[1]
             }
         } catch { $ErrorActionPreference = $prevEAP }

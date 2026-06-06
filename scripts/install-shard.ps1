@@ -188,7 +188,7 @@ function Get-NvidiaCudaVersion {
     $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
     if ($null -eq $smi) { return $null }
     $raw = & nvidia-smi 2>$null | Out-String
-    if ($raw -match "CUDA Version:\s*([0-9]+\.[0-9]+)") { return $Matches[1] }
+    if ($raw -match "CUDA.*?Version:\s*([0-9]+\.[0-9]+)") { return $Matches[1] }
     return $null
 }
 
@@ -229,22 +229,46 @@ function Install-LlamaRuntime {
 
     if ($cudaVariant) {
         Write-Host "Detected NVIDIA CUDA runtime version: $cudaVariant"
-        $runtimeDirName = "llama-$tag-win-cuda-$($cudaVariant -replace '\\.', '_')"
-        $runtimeDir = Join-Path $toolsDir $runtimeDirName
+        
+        # Try the detected CUDA version, fallback to 12.4 if not available
+        $tryVersions = @($cudaVariant, "12.4") | Select-Object -Unique
+        $successVariant = $null
+        
+        foreach ($tryVar in $tryVersions) {
+            $runtimeDirName = "llama-$tag-win-cuda-$($tryVar -replace '\\.', '_')"
+            $runtimeDir = Join-Path $toolsDir $runtimeDirName
 
-        if ((Test-Path $runtimeDir) -and -not $forceDownload) {
-            Write-Host "Runtime already exists, skipping download: $runtimeDir"
-            return
+            if ((Test-Path $runtimeDir) -and -not $forceDownload) {
+                Write-Host "Runtime already exists, skipping download: $runtimeDir"
+                return
+            }
+
+            $mainZip = Join-Path $toolsDir "llama-$tag-bin-win-cuda-$tryVar-x64.zip"
+            $cudartZip = Join-Path $toolsDir "cudart-llama-bin-win-cuda-$tryVar-x64.zip"
+
+            $mainUrl = "https://github.com/ggml-org/llama.cpp/releases/download/$tag/llama-$tag-bin-win-cuda-$tryVar-x64.zip"
+            $cudartUrl = "https://github.com/ggml-org/llama.cpp/releases/download/$tag/cudart-llama-bin-win-cuda-$tryVar-x64.zip"
+
+            try {
+                Write-Host "Trying CUDA $tryVar..."
+                Invoke-Download -url $mainUrl -outFile $mainZip
+                Invoke-Download -url $cudartUrl -outFile $cudartZip
+                $successVariant = $tryVar
+                break
+            } catch {
+                Write-Host "  CUDA $tryVar not available, trying next..."
+                if (Test-Path $mainZip) { Remove-Item -Path $mainZip -Force -ErrorAction SilentlyContinue }
+                if (Test-Path $cudartZip) { Remove-Item -Path $cudartZip -Force -ErrorAction SilentlyContinue }
+                if ($tryVar -eq $tryVersions[-1]) { throw }
+            }
         }
-
-        $mainZip = Join-Path $toolsDir "llama-$tag-bin-win-cuda-$cudaVariant-x64.zip"
-        $cudartZip = Join-Path $toolsDir "cudart-llama-bin-win-cuda-$cudaVariant-x64.zip"
-
-        $mainUrl = "https://github.com/ggml-org/llama.cpp/releases/download/$tag/llama-$tag-bin-win-cuda-$cudaVariant-x64.zip"
-        $cudartUrl = "https://github.com/ggml-org/llama.cpp/releases/download/$tag/cudart-llama-bin-win-cuda-$cudaVariant-x64.zip"
-
-        Invoke-Download -url $mainUrl -outFile $mainZip
-        Invoke-Download -url $cudartUrl -outFile $cudartZip
+        
+        if (-not $successVariant) { throw "Could not download any CUDA variant" }
+        
+        $runtimeDirName = "llama-$tag-win-cuda-$($successVariant -replace '\\.', '_')"
+        $runtimeDir = Join-Path $toolsDir $runtimeDirName
+        $mainZip = Join-Path $toolsDir "llama-$tag-bin-win-cuda-$successVariant-x64.zip"
+        $cudartZip = Join-Path $toolsDir "cudart-llama-bin-win-cuda-$successVariant-x64.zip"
 
         if (Test-Path $runtimeDir) { Remove-Item -Path $runtimeDir -Recurse -Force }
         Ensure-Dir $runtimeDir
